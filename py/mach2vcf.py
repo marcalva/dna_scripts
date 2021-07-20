@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import datetime
 from multiprocessing import Pool
+import fasta_fai
 
 #######################################
 # Functions
@@ -109,7 +110,9 @@ dose2vcf2v = np.vectorize(dose2vcf2)
 parser = argparse.ArgumentParser()
 parser.add_argument("--dose", "-d", help="Mach input dose file", required=True)
 parser.add_argument("--info", "-i", help="Mach input INFO file.", required=True)
-parser.add_argument("--fai", "-f", help="Fasta index file.", required=True)
+parser.add_argument("--fasta", "-f", help="Fasta file.", required=True)
+parser.add_argument("--fai", help="Fasta index file.", required=True)
+parser.add_argument("--fwd_swap", help="Swap ref/alt alleles if necessary to match reference sequence.", action='store_true')
 parser.add_argument("--chrm", "-c", help="Chromosome name(s) to include in header. Multiple values should be comma separated.", required=True)
 parser.add_argument("--out", "-o", help="Output file name.", required=True)
 
@@ -126,9 +129,12 @@ todaystr = today.strftime("%Y%m%d")
 # n_threads = int(args.threads)
 n_threads = 1
 
+print("Swapping to match forward strand:", args.fwd_swap)
+
 print("Reading dosages", flush = True)
 samples, geno = read_dose(args.dose)
 print("Done", flush = True)
+
 
 geno_a = np.array(geno)
 del geno
@@ -202,6 +208,7 @@ hdr_all = '\n'.join(hdr_l)
 # variant records
 #######################################
 
+rdr = fasta_fai.Reader(args.fasta)
 
 frmt = 'GT:GP:PL'
 
@@ -209,7 +216,7 @@ t = hdr_all + '\n'
 ch = ofs.write(t)
 
 for v in range(nv):
-    if v % 1e3 == 0:
+    if v > 0 and v % 1e3 == 0:
         print(v, " variants", flush = True)
     #
     t_name = info.iloc[v, 0]
@@ -231,8 +238,22 @@ for v in range(nv):
     t_info = ';'.join(t_info_l)
     #
     #t_gt = geno_d[:,v].tolist()
+    # swap alleles
+    if args.fwd_swap:
+        refseq_base = rdr.get_seq(t_chrm, int(t_pos) - 1, len(t_ref))
+        if t_ref == refseq_base:
+            pass
+        else:
+            if t_alt != refseq_base:
+                print("Warning:", "no alleles for", t_name, "match the reference sequence. Did not swap.")
+            else:
+                geno_a[:,v] = 2 - geno_a[:,v]
+                reft = t_ref
+                t_ref = t_alt
+                t_alt = reft
     t_gt = dose2vcf2v(geno_a[:,v])
     t_gt = t_gt.tolist()
+    t_name = t_chrm + ":" + t_pos + ":" + t_ref + "_" + t_alt
     #
     t_l = [t_chrm, t_pos, t_name, t_ref, t_alt, t_qual, t_filter, t_info, frmt] + t_gt
     t = '\t'.join(t_l) + '\n'
